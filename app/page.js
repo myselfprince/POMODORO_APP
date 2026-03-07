@@ -19,21 +19,25 @@ export default function Pomodoro() {
   const [previousState, setPreviousState] = useState(null);
   const [showShortcuts, setShowShortcuts] = useState(false);
 
-  // Timer logic
+  // Load total study time from localStorage on initial render
   useEffect(() => {
-    let interval;
-    if (isRunning && timeLeft > 0) {
-      interval = setInterval(() => {
-        setTimeLeft((prev) => prev - 1);
-        if (mode === "study") {
-          setTotalStudySeconds((prev) => prev + 1);
+    const storedData = localStorage.getItem("pomodoroStudyTime");
+    if (storedData) {
+      try {
+        const { date, seconds } = JSON.parse(storedData);
+        const today = new Date().toDateString();
+        
+        // Restore time if it's the same day, otherwise clear the stale data
+        if (date === today) {
+          setTotalStudySeconds(seconds);
+        } else {
+          localStorage.removeItem("pomodoroStudyTime");
         }
-      }, 1000);
-    } else if (isRunning && timeLeft === 0) {
-      handleSessionEnd();
+      } catch (e) {
+        console.error("Error reading from local storage");
+      }
     }
-    return () => clearInterval(interval);
-  }, [isRunning, timeLeft, mode, sessionsCompleted]);
+  }, []);
 
   const handleSessionEnd = useCallback(() => {
     if (mode === "study") {
@@ -53,10 +57,47 @@ export default function Pomodoro() {
     }
   }, [mode, sessionsCompleted, longBreakDuration, shortBreakDuration, studyDuration]);
 
+  // Timer logic
+  useEffect(() => {
+    let interval;
+    if (isRunning && timeLeft > 0) {
+      interval = setInterval(() => {
+        setTimeLeft((prev) => prev - 1);
+        
+        if (mode === "study") {
+          setTotalStudySeconds((prev) => {
+            const today = new Date().toDateString();
+            const storedData = localStorage.getItem("pomodoroStudyTime");
+            let lastDate = today;
+            
+            if (storedData) {
+              try {
+                lastDate = JSON.parse(storedData).date;
+              } catch(e) {}
+            }
+
+            // If midnight was crossed while studying, reset to 1 sec. Otherwise, add 1.
+            const newTotal = lastDate === today ? prev + 1 : 1;
+            
+            // Sync strictly this piece of data to localStorage
+            localStorage.setItem(
+              "pomodoroStudyTime", 
+              JSON.stringify({ date: today, seconds: newTotal })
+            );
+            
+            return newTotal;
+          });
+        }
+      }, 1000);
+    } else if (isRunning && timeLeft === 0) {
+      handleSessionEnd();
+    }
+    return () => clearInterval(interval);
+  }, [isRunning, timeLeft, mode, handleSessionEnd]);
+
   const toggleTimer = useCallback(() => setIsRunning((prev) => !prev), []);
 
   const resetTimer = useCallback(() => {
-    // Snapshot current state for Ctrl+Z undo
     setPreviousState({
       timeLeft,
       isRunning,
@@ -73,14 +114,13 @@ export default function Pomodoro() {
       setTimeLeft(previousState.timeLeft);
       setIsRunning(previousState.isRunning);
       setMode(previousState.mode);
-      setPreviousState(null); // Clear history after undoing
+      setPreviousState(null);
     }
   }, [previousState]);
 
   // Keyboard Shortcuts Listener
   useEffect(() => {
     const handleKeyDown = (e) => {
-      // Prevent shortcuts from firing when typing in the custom duration inputs
       if (e.target.tagName === "INPUT") return;
 
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "z") {
@@ -102,7 +142,7 @@ export default function Pomodoro() {
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [undoReset, toggleTimer, resetTimer, handleSessionEnd]);
 
-  // Helper to format seconds into HH:MM:SS or MM:SS
+  // Helper to format seconds
   const formatTime = (seconds) => {
     const h = Math.floor(seconds / 3600);
     const m = Math.floor((seconds % 3600) / 60);
@@ -140,7 +180,7 @@ export default function Pomodoro() {
           </div>
         )}
 
-        <h1 className="text-3xl font-bold text-center mb-6">G4Gate Timer</h1>
+        <h1 className="text-3xl font-bold text-center mb-6">Focus Timer</h1>
 
         {/* Mode Indicator */}
         <div className="flex justify-center space-x-2 mb-8">
@@ -191,7 +231,7 @@ export default function Pomodoro() {
           </div>
           <div className="text-center w-1/2">
             <p className="text-xs text-slate-500 font-semibold uppercase tracking-wider mb-1">
-              Total Study Time
+              Today's Focus
             </p>
             <p className="text-2xl font-bold text-blue-600">
               {formatTime(totalStudySeconds)}
