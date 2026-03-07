@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 
 export default function Pomodoro() {
   // Customizable durations (in minutes)
@@ -14,6 +14,10 @@ export default function Pomodoro() {
   const [mode, setMode] = useState("study"); // 'study', 'shortBreak', 'longBreak'
   const [sessionsCompleted, setSessionsCompleted] = useState(0);
   const [totalStudySeconds, setTotalStudySeconds] = useState(0);
+
+  // Undo & UI state
+  const [previousState, setPreviousState] = useState(null);
+  const [showShortcuts, setShowShortcuts] = useState(false);
 
   // Timer logic
   useEffect(() => {
@@ -40,7 +44,7 @@ export default function Pomodoro() {
     }
   }, [studyDuration, shortBreakDuration, longBreakDuration, mode, isRunning]);
 
-  const handleSessionEnd = () => {
+  const handleSessionEnd = useCallback(() => {
     if (mode === "study") {
       const newCount = sessionsCompleted + 1;
       setSessionsCompleted(newCount);
@@ -56,15 +60,56 @@ export default function Pomodoro() {
       setMode("study");
       setTimeLeft(studyDuration * 60);
     }
-  };
+  }, [mode, sessionsCompleted, longBreakDuration, shortBreakDuration, studyDuration]);
 
-  const toggleTimer = () => setIsRunning(!isRunning);
+  const toggleTimer = useCallback(() => setIsRunning((prev) => !prev), []);
 
-  const resetTimer = () => {
+  const resetTimer = useCallback(() => {
+    // Snapshot current state for Ctrl+Z undo
+    setPreviousState({
+      timeLeft,
+      isRunning,
+      mode,
+    });
+    
     setIsRunning(false);
     setMode("study");
     setTimeLeft(studyDuration * 60);
-  };
+  }, [timeLeft, isRunning, mode, studyDuration]);
+
+  const undoReset = useCallback(() => {
+    if (previousState) {
+      setTimeLeft(previousState.timeLeft);
+      setIsRunning(previousState.isRunning);
+      setMode(previousState.mode);
+      setPreviousState(null); // Clear history after undoing
+    }
+  }, [previousState]);
+
+  // Keyboard Shortcuts Listener
+  useEffect(() => {
+    const handleKeyDown = (e) => {
+      // Prevent shortcuts from firing when typing in the custom duration inputs
+      if (e.target.tagName === "INPUT") return;
+
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "z") {
+        e.preventDefault();
+        undoReset();
+      } else if (e.key.toLowerCase() === "s" || e.code === "Space") {
+        e.preventDefault();
+        toggleTimer();
+      } else if (e.key.toLowerCase() === "r") {
+        e.preventDefault();
+        resetTimer();
+      } else if (e.key.toLowerCase() === "n") {
+        e.preventDefault();
+        handleSessionEnd();
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [undoReset, toggleTimer, resetTimer, handleSessionEnd]);
 
   // Helper to format seconds into HH:MM:SS or MM:SS
   const formatTime = (seconds) => {
@@ -79,7 +124,7 @@ export default function Pomodoro() {
     return `${m.toString().padStart(2, "0")}:${s.toString().padStart(2, "0")}`;
   };
 
-  // Dynamic background colors based on mode
+  // Dynamic background colors
   const bgColors = {
     study: "bg-blue-500",
     shortBreak: "bg-green-500",
@@ -88,9 +133,22 @@ export default function Pomodoro() {
 
   return (
     <div
-      className={`min-h-screen flex items-center justify-center transition-colors duration-500 ${bgColors[mode]}`}
+      className={`min-h-screen flex flex-col items-center justify-center transition-colors duration-500 py-10 ${bgColors[mode]}`}
     >
-      <div className="bg-white p-8 rounded-2xl shadow-2xl max-w-md w-full text-slate-800">
+      <div className="bg-white p-8 rounded-2xl shadow-2xl max-w-md w-full text-slate-800 mb-6 relative">
+        
+        {/* Undo Toast Notification */}
+        {previousState && (
+          <div className="absolute -top-12 left-0 right-0 flex justify-center animate-fade-in-down">
+            <span className="bg-slate-800 text-white px-4 py-2 rounded-lg text-sm shadow-lg flex items-center space-x-2">
+              <span>Timer reset.</span>
+              <button onClick={undoReset} className="font-bold underline hover:text-blue-300">
+                Undo (Ctrl+Z)
+              </button>
+            </span>
+          </div>
+        )}
+
         <h1 className="text-3xl font-bold text-center mb-6">Focus Timer</h1>
 
         {/* Mode Indicator */}
@@ -98,7 +156,7 @@ export default function Pomodoro() {
           {["study", "shortBreak", "longBreak"].map((m) => (
             <span
               key={m}
-              className={`px-4 py-1 rounded-full text-sm font-semibold capitalize ${
+              className={`px-4 py-1 rounded-full text-sm font-semibold capitalize transition ${
                 mode === m
                   ? "bg-slate-800 text-white"
                   : "bg-slate-200 text-slate-500"
@@ -134,17 +192,17 @@ export default function Pomodoro() {
 
         {/* Stats */}
         <div className="flex justify-between items-center mb-6 bg-slate-50 p-4 rounded-lg border border-slate-100">
-          <div className="text-center">
-            <p className="text-sm text-slate-500 font-semibold uppercase tracking-wider">
+          <div className="text-center w-1/2 border-r border-slate-200">
+            <p className="text-xs text-slate-500 font-semibold uppercase tracking-wider mb-1">
               Sessions
             </p>
-            <p className="text-xl font-bold">{sessionsCompleted}</p>
+            <p className="text-2xl font-bold text-slate-700">{sessionsCompleted}</p>
           </div>
-          <div className="text-center">
-            <p className="text-sm text-slate-500 font-semibold uppercase tracking-wider">
+          <div className="text-center w-1/2">
+            <p className="text-xs text-slate-500 font-semibold uppercase tracking-wider mb-1">
               Total Study Time
             </p>
-            <p className="text-xl font-bold text-blue-600">
+            <p className="text-2xl font-bold text-blue-600">
               {formatTime(totalStudySeconds)}
             </p>
           </div>
@@ -152,7 +210,7 @@ export default function Pomodoro() {
 
         {/* Customization Settings */}
         <div className="space-y-4">
-          <h2 className="font-bold text-slate-700">Custom Durations (Mins)</h2>
+          <h2 className="font-bold text-slate-700 text-sm uppercase tracking-wide">Custom Durations (Mins)</h2>
           <div className="grid grid-cols-3 gap-4">
             <div>
               <label className="block text-xs text-slate-500 mb-1">Study</label>
@@ -190,6 +248,27 @@ export default function Pomodoro() {
             </div>
           </div>
         </div>
+      </div>
+
+      {/* Shortcuts Toggle */}
+      <div className="max-w-md w-full">
+        <button 
+          onClick={() => setShowShortcuts(!showShortcuts)}
+          className="text-white/80 hover:text-white text-sm font-medium flex items-center justify-center w-full transition"
+        >
+          {showShortcuts ? "Hide Shortcuts" : "View Shortcuts"}
+        </button>
+        
+        {showShortcuts && (
+          <div className="mt-4 bg-white/10 backdrop-blur-md p-4 rounded-xl border border-white/20 text-white text-sm">
+            <ul className="space-y-2">
+              <li className="flex justify-between"><span>Start / Pause</span> <kbd className="bg-white/20 px-2 py-0.5 rounded font-mono">S</kbd> or <kbd className="bg-white/20 px-2 py-0.5 rounded font-mono">Space</kbd></li>
+              <li className="flex justify-between"><span>Reset Timer</span> <kbd className="bg-white/20 px-2 py-0.5 rounded font-mono">R</kbd></li>
+              <li className="flex justify-between"><span>Undo Reset</span> <kbd className="bg-white/20 px-2 py-0.5 rounded font-mono">Ctrl + Z</kbd></li>
+              <li className="flex justify-between"><span>Skip to Next Phase</span> <kbd className="bg-white/20 px-2 py-0.5 rounded font-mono">N</kbd></li>
+            </ul>
+          </div>
+        )}
       </div>
     </div>
   );
