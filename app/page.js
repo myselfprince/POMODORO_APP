@@ -39,7 +39,16 @@ export default function Pomodoro() {
     }
   }, []);
 
+  // Helper to play notification sound
+  const playSound = () => {
+    // You can replace this URL with a local path like "/notification.mp3" if you have a file in your public folder
+    const audio = new Audio("https://actions.google.com/sounds/v1/alarms/beep_short.ogg");
+    audio.play().catch((err) => console.log("Audio playback was prevented:", err));
+  };
+
   const handleSessionEnd = useCallback(() => {
+    playSound(); // Trigger sound when the session ends
+
     if (mode === "study") {
       const newCount = sessionsCompleted + 1;
       setSessionsCompleted(newCount);
