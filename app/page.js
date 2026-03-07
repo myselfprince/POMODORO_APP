@@ -35,15 +35,6 @@ export default function Pomodoro() {
     return () => clearInterval(interval);
   }, [isRunning, timeLeft, mode, sessionsCompleted]);
 
-  // Update timer display immediately if durations are customized while stopped
-  useEffect(() => {
-    if (!isRunning) {
-      if (mode === "study") setTimeLeft(studyDuration * 60);
-      else if (mode === "shortBreak") setTimeLeft(shortBreakDuration * 60);
-      else if (mode === "longBreak") setTimeLeft(longBreakDuration * 60);
-    }
-  }, [studyDuration, shortBreakDuration, longBreakDuration, mode, isRunning]);
-
   const handleSessionEnd = useCallback(() => {
     if (mode === "study") {
       const newCount = sessionsCompleted + 1;
@@ -149,7 +140,7 @@ export default function Pomodoro() {
           </div>
         )}
 
-        <h1 className="text-3xl font-bold text-center mb-6">Focus Timer</h1>
+        <h1 className="text-3xl font-bold text-center mb-6">G4Gate Timer</h1>
 
         {/* Mode Indicator */}
         <div className="flex justify-center space-x-2 mb-8">
@@ -218,7 +209,11 @@ export default function Pomodoro() {
                 type="number"
                 min="1"
                 value={studyDuration}
-                onChange={(e) => setStudyDuration(Number(e.target.value))}
+                onChange={(e) => {
+                  const val = Number(e.target.value);
+                  setStudyDuration(val);
+                  if (!isRunning && mode === "study") setTimeLeft(val * 60);
+                }}
                 className="w-full p-2 border border-slate-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
               />
             </div>
@@ -230,7 +225,11 @@ export default function Pomodoro() {
                 type="number"
                 min="1"
                 value={shortBreakDuration}
-                onChange={(e) => setShortBreakDuration(Number(e.target.value))}
+                onChange={(e) => {
+                  const val = Number(e.target.value);
+                  setShortBreakDuration(val);
+                  if (!isRunning && mode === "shortBreak") setTimeLeft(val * 60);
+                }}
                 className="w-full p-2 border border-slate-300 rounded focus:outline-none focus:ring-2 focus:ring-green-500"
               />
             </div>
@@ -242,7 +241,11 @@ export default function Pomodoro() {
                 type="number"
                 min="1"
                 value={longBreakDuration}
-                onChange={(e) => setLongBreakDuration(Number(e.target.value))}
+                onChange={(e) => {
+                  const val = Number(e.target.value);
+                  setLongBreakDuration(val);
+                  if (!isRunning && mode === "longBreak") setTimeLeft(val * 60);
+                }}
                 className="w-full p-2 border border-slate-300 rounded focus:outline-none focus:ring-2 focus:ring-purple-500"
               />
             </div>
@@ -262,10 +265,10 @@ export default function Pomodoro() {
         {showShortcuts && (
           <div className="mt-4 bg-white/10 backdrop-blur-md p-4 rounded-xl border border-white/20 text-white text-sm">
             <ul className="space-y-2">
-              <li className="flex justify-between"><span>Start / Pause</span> <kbd className="bg-white/20 px-2 py-0.5 rounded font-mono">S</kbd> or <kbd className="bg-white/20 px-2 py-0.5 rounded font-mono">Space</kbd></li>
-              <li className="flex justify-between"><span>Reset Timer</span> <kbd className="bg-white/20 px-2 py-0.5 rounded font-mono">R</kbd></li>
-              <li className="flex justify-between"><span>Undo Reset</span> <kbd className="bg-white/20 px-2 py-0.5 rounded font-mono">Ctrl + Z</kbd></li>
-              <li className="flex justify-between"><span>Skip to Next Phase</span> <kbd className="bg-white/20 px-2 py-0.5 rounded font-mono">N</kbd></li>
+              <li className="flex justify-between"><span>Start / Pause</span> <span><kbd className="bg-white/20 px-2 py-0.5 rounded font-mono shadow-sm">S</kbd> or <kbd className="bg-white/20 px-2 py-0.5 rounded font-mono shadow-sm">Space</kbd></span></li>
+              <li className="flex justify-between"><span>Reset Timer</span> <kbd className="bg-white/20 px-2 py-0.5 rounded font-mono shadow-sm">R</kbd></li>
+              <li className="flex justify-between"><span>Undo Reset</span> <kbd className="bg-white/20 px-2 py-0.5 rounded font-mono shadow-sm">Ctrl + Z</kbd></li>
+              <li className="flex justify-between"><span>Skip to Next Phase</span> <kbd className="bg-white/20 px-2 py-0.5 rounded font-mono shadow-sm">N</kbd></li>
             </ul>
           </div>
         )}
