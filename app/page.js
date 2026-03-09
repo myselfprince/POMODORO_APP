@@ -189,7 +189,7 @@ export default function Pomodoro() {
           </div>
         )}
 
-        <h1 className="text-3xl font-bold text-center mb-6">Focus Timer</h1>
+        <h1 className="text-3xl font-bold text-center mb-6">G4Gate Timer</h1>
 
         {/* Mode Indicator */}
         <div className="flex justify-center space-x-2 mb-8">
@@ -240,7 +240,7 @@ export default function Pomodoro() {
           </div>
           <div className="text-center w-1/2">
             <p className="text-xs text-slate-500 font-semibold uppercase tracking-wider mb-1">
-              Today's Focus
+              Total Study Time
             </p>
             <p className="text-2xl font-bold text-blue-600">
               {formatTime(totalStudySeconds)}
