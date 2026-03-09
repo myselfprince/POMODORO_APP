@@ -199,9 +199,9 @@ export default function Pomodoro() {
 
   // Dynamic background colors
   const bgColors = {
-    study: "bg-blue-600",
+    study: "bg-black",
     shortBreak: "bg-green-600",
-    longBreak: "bg-purple-600",
+    longBreak: "bg-blue-600",
   };
 
   // 1. FULL UI (Rendered when on the main page)
