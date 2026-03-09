@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
+import { createPortal } from "react-dom";
 
 export default function Pomodoro() {
   // Customizable durations (in minutes)
@@ -15,9 +16,10 @@ export default function Pomodoro() {
   const [sessionsCompleted, setSessionsCompleted] = useState(0);
   const [totalStudySeconds, setTotalStudySeconds] = useState(0);
 
-  // Undo & UI state
+  // Undo, UI, and PiP state
   const [previousState, setPreviousState] = useState(null);
   const [showShortcuts, setShowShortcuts] = useState(false);
+  const [pipWindow, setPipWindow] = useState(null);
 
   // Load total study time from localStorage on initial render
   useEffect(() => {
@@ -41,7 +43,6 @@ export default function Pomodoro() {
 
   // Helper to play notification sound
   const playSound = () => {
-    // You can replace this URL with a local path like "/notification.mp3" if you have a file in your public folder
     const audio = new Audio("https://actions.google.com/sounds/v1/alarms/beep_short.ogg");
     audio.play().catch((err) => console.log("Audio playback was prevented:", err));
   };
@@ -85,10 +86,8 @@ export default function Pomodoro() {
               } catch(e) {}
             }
 
-            // If midnight was crossed while studying, reset to 1 sec. Otherwise, add 1.
             const newTotal = lastDate === today ? prev + 1 : 1;
             
-            // Sync strictly this piece of data to localStorage
             localStorage.setItem(
               "pomodoroStudyTime", 
               JSON.stringify({ date: today, seconds: newTotal })
@@ -151,6 +150,40 @@ export default function Pomodoro() {
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [undoReset, toggleTimer, resetTimer, handleSessionEnd]);
 
+  // --- Picture-in-Picture Logic ---
+  const togglePiP = async () => {
+    if (pipWindow) {
+      pipWindow.close();
+      return;
+    }
+
+    if (!("documentPictureInPicture" in window)) {
+      alert("Your browser doesn't support the Always-on-Top API yet. Please use Chrome or Edge.");
+      return;
+    }
+
+    try {
+      // REQUESTING A MUCH SMALLER WINDOW
+      const newWindow = await window.documentPictureInPicture.requestWindow({
+        width: 260,
+        height: 160,
+      });
+
+      // Copy all styles (Tailwind) from the main app to the pop-up
+      document.querySelectorAll('style, link[rel="stylesheet"]').forEach((node) => {
+        newWindow.document.head.appendChild(node.cloneNode(true));
+      });
+
+      newWindow.addEventListener("pagehide", () => {
+        setPipWindow(null);
+      });
+
+      setPipWindow(newWindow);
+    } catch (error) {
+      console.error("Failed to open PiP window:", error);
+    }
+  };
+
   // Helper to format seconds
   const formatTime = (seconds) => {
     const h = Math.floor(seconds / 3600);
@@ -166,15 +199,14 @@ export default function Pomodoro() {
 
   // Dynamic background colors
   const bgColors = {
-    study: "bg-blue-500",
-    shortBreak: "bg-green-500",
-    longBreak: "bg-purple-500",
+    study: "bg-blue-600",
+    shortBreak: "bg-green-600",
+    longBreak: "bg-purple-600",
   };
 
-  return (
-    <div
-      className={`min-h-screen flex flex-col items-center justify-center transition-colors duration-500 py-10 ${bgColors[mode]}`}
-    >
+  // 1. FULL UI (Rendered when on the main page)
+  const FullTimerUI = (
+    <div className={`min-h-screen flex flex-col items-center justify-center transition-colors duration-500 py-10 ${bgColors[mode]}`}>
       <div className="bg-white p-8 rounded-2xl shadow-2xl max-w-md w-full text-slate-800 mb-6 relative">
         
         {/* Undo Toast Notification */}
@@ -267,9 +299,7 @@ export default function Pomodoro() {
               />
             </div>
             <div>
-              <label className="block text-xs text-slate-500 mb-1">
-                Short Break
-              </label>
+              <label className="block text-xs text-slate-500 mb-1">Short Break</label>
               <input
                 type="number"
                 min="1"
@@ -283,9 +313,7 @@ export default function Pomodoro() {
               />
             </div>
             <div>
-              <label className="block text-xs text-slate-500 mb-1">
-                Long Break
-              </label>
+              <label className="block text-xs text-slate-500 mb-1">Long Break</label>
               <input
                 type="number"
                 min="1"
@@ -302,8 +330,15 @@ export default function Pomodoro() {
         </div>
       </div>
 
-      {/* Shortcuts Toggle */}
-      <div className="max-w-md w-full">
+      {/* Pop-out button */}
+      <div className="max-w-md w-full flex flex-col space-y-4">
+        <button 
+          onClick={togglePiP}
+          className="bg-white/20 hover:bg-white/30 text-white py-3 rounded-xl font-bold flex items-center justify-center transition shadow-lg backdrop-blur-md"
+        >
+          🚀 Open Minimal Timer
+        </button>
+
         <button 
           onClick={() => setShowShortcuts(!showShortcuts)}
           className="text-white/80 hover:text-white text-sm font-medium flex items-center justify-center w-full transition"
@@ -312,16 +347,73 @@ export default function Pomodoro() {
         </button>
         
         {showShortcuts && (
-          <div className="mt-4 bg-white/10 backdrop-blur-md p-4 rounded-xl border border-white/20 text-white text-sm">
+          <div className="bg-white/10 backdrop-blur-md p-4 rounded-xl border border-white/20 text-white text-sm">
             <ul className="space-y-2">
               <li className="flex justify-between"><span>Start / Pause</span> <span><kbd className="bg-white/20 px-2 py-0.5 rounded font-mono shadow-sm">S</kbd> or <kbd className="bg-white/20 px-2 py-0.5 rounded font-mono shadow-sm">Space</kbd></span></li>
               <li className="flex justify-between"><span>Reset Timer</span> <kbd className="bg-white/20 px-2 py-0.5 rounded font-mono shadow-sm">R</kbd></li>
               <li className="flex justify-between"><span>Undo Reset</span> <kbd className="bg-white/20 px-2 py-0.5 rounded font-mono shadow-sm">Ctrl + Z</kbd></li>
-              <li className="flex justify-between"><span>Skip to Next Phase</span> <kbd className="bg-white/20 px-2 py-0.5 rounded font-mono shadow-sm">N</kbd></li>
+              <li className="flex justify-between"><span>Skip Phase</span> <kbd className="bg-white/20 px-2 py-0.5 rounded font-mono shadow-sm">N</kbd></li>
             </ul>
           </div>
         )}
       </div>
     </div>
+  );
+
+  // 2. MINIMAL UI (Rendered only inside the tiny pop-up window)
+  const MinimalTimerUI = (
+    <div className={`h-screen w-screen flex flex-col items-center justify-center transition-colors duration-500 overflow-hidden ${bgColors[mode]}`}>
+      
+      <span className="text-white/90 text-xs font-bold uppercase tracking-widest mb-1 shadow-sm">
+        {mode.replace(/([A-Z])/g, " $1").trim()}
+      </span>
+      
+      <div className="text-5xl font-mono font-bold tracking-tight text-white mb-4 drop-shadow-md">
+        {formatTime(timeLeft)}
+      </div>
+      
+      <div className="flex space-x-3">
+        <button
+          onClick={toggleTimer}
+          className="px-4 py-1.5 bg-slate-900/40 hover:bg-slate-900/60 text-white rounded-md font-medium text-sm transition"
+        >
+          {isRunning ? "Pause" : "Play"}
+        </button>
+        <button
+          onClick={handleSessionEnd}
+          className="px-4 py-1.5 bg-white/20 hover:bg-white/30 text-white rounded-md font-medium text-sm transition"
+        >
+          Skip
+        </button>
+      </div>
+      
+    </div>
+  );
+
+  // Determine what to render based on whether the PiP window is open
+  return (
+    <>
+      {/* Show full UI when PiP is closed */}
+      {!pipWindow && FullTimerUI}
+
+      {/* Show tiny minimal UI when PiP is open */}
+      {pipWindow && createPortal(MinimalTimerUI, pipWindow.document.body)}
+
+      {/* Show placeholder on main tab when PiP is active */}
+      {pipWindow && (
+        <div className="min-h-screen flex flex-col items-center justify-center bg-slate-100 text-slate-800">
+          <div className="text-center max-w-md p-8 bg-white rounded-2xl shadow-xl border border-slate-200">
+            <h2 className="text-2xl font-bold mb-4">Timer is running in Pop-up! 🚀</h2>
+            <p className="text-slate-500 mb-6">Your minimal timer is currently pinned to your screen.</p>
+            <button 
+              onClick={() => pipWindow.close()} 
+              className="px-6 py-3 bg-blue-600 text-white font-bold rounded-lg hover:bg-blue-700 transition"
+            >
+              Bring Timer Back
+            </button>
+          </div>
+        </div>
+      )}
+    </>
   );
 }
