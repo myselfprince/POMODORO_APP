@@ -4,40 +4,50 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { createPortal } from "react-dom";
 
 export default function Pomodoro() {
+  // --- POMODORO STATE ---
   const [studyDuration, setStudyDuration] = useState(60);
   const [shortBreakDuration, setShortBreakDuration] = useState(10);
   const [longBreakDuration, setLongBreakDuration] = useState(30);
-
   const [timeLeft, setTimeLeft] = useState(60 * 60);
   const [isRunning, setIsRunning] = useState(false);
   const [mode, setMode] = useState("study");
   const [sessionsCompleted, setSessionsCompleted] = useState(0);
   const [totalStudySeconds, setTotalStudySeconds] = useState(0);
-
   const [previousState, setPreviousState] = useState(null);
+  
+  // --- STOPWATCH STATE ---
+  const [stopwatchTime, setStopwatchTime] = useState(0); // In seconds (with decimals)
+  const [isStopwatchRunning, setIsStopwatchRunning] = useState(false);
+
+  // --- UI STATE ---
   const [showShortcuts, setShowShortcuts] = useState(false);
   const [pipWindow, setPipWindow] = useState(null);
 
-  // --- Timestamp-based timer refs ---
+  // --- REFS ---
+  // Using Date.now() prevents drift when the computer goes to sleep
   const startTimestampRef = useRef(null);
   const startTimeLeftRef = useRef(60 * 60);
   const studyStartTimestampRef = useRef(null);
   const studySecondsAtStartRef = useRef(0);
+  
+  const stopwatchStartRef = useRef(null);
+  const stopwatchAccumRef = useRef(0);
 
-  // --- Refs for keeping callbacks fresh without re-renders ---
   const rafRef = useRef(null);
   const modeRef = useRef(mode);
   const sessionsRef = useRef(sessionsCompleted);
   const totalStudyRef = useRef(totalStudySeconds);
   const isRunningRef = useRef(isRunning);
+  const isStopwatchRunningRef = useRef(isStopwatchRunning);
 
-  // Keep refs in sync with state
+  // Keep refs synced with state
   useEffect(() => { modeRef.current = mode; }, [mode]);
   useEffect(() => { sessionsRef.current = sessionsCompleted; }, [sessionsCompleted]);
   useEffect(() => { totalStudyRef.current = totalStudySeconds; }, [totalStudySeconds]);
   useEffect(() => { isRunningRef.current = isRunning; }, [isRunning]);
+  useEffect(() => { isStopwatchRunningRef.current = isStopwatchRunning; }, [isStopwatchRunning]);
 
-  // Load persisted total study time
+  // Load Persisted Data
   useEffect(() => {
     const storedData = localStorage.getItem("pomodoroStudyTime");
     if (storedData) {
@@ -68,7 +78,6 @@ export default function Pomodoro() {
   const handleSessionEnd = useCallback((currentTimeLeft, currentMode, currentSessionsCompleted) => {
     playSound();
     let nextMode;
-
     if (currentMode === "study") {
       const newCount = currentSessionsCompleted + 1;
       setSessionsCompleted(newCount);
@@ -90,80 +99,76 @@ export default function Pomodoro() {
       startTimeLeftRef.current = studyDuration * 60;
     }
     
-    // Reset segment start for the new phase
-    startTimestampRef.current = performance.now();
-
-    // FIX: Properly initialize study tracking if we are auto-continuing into a study session
+    startTimestampRef.current = Date.now(); // Fixed: Date.now()
     if (nextMode === "study") {
-      studyStartTimestampRef.current = performance.now();
+      studyStartTimestampRef.current = Date.now();
       studySecondsAtStartRef.current = totalStudyRef.current;
     } else {
       studyStartTimestampRef.current = null;
     }
   }, [longBreakDuration, shortBreakDuration, studyDuration]);
 
+  // --- UNIFIED TICK LOOP ---
   const tick = useCallback(() => {
-    if (!isRunningRef.current) return;
+    const now = Date.now(); // Fixed: Date.now() prevents sleep drift
+    let keepTicking = false;
 
-    const now = performance.now();
-    const elapsed = (now - startTimestampRef.current) / 1000; 
-    const newTimeLeft = Math.max(0, Math.round(startTimeLeftRef.current - elapsed));
+    // 1. Pomodoro Logic
+    if (isRunningRef.current) {
+      const elapsed = (now - startTimestampRef.current) / 1000;
+      const newTimeLeft = Math.max(0, Math.round(startTimeLeftRef.current - elapsed));
+      setTimeLeft(newTimeLeft);
 
-    setTimeLeft(newTimeLeft);
-
-    // Update totalStudySeconds if in study mode
-    if (modeRef.current === "study" && studyStartTimestampRef.current !== null) {
-      const studyElapsed = Math.floor((now - studyStartTimestampRef.current) / 1000);
-      const newTotal = studySecondsAtStartRef.current + studyElapsed;
-      setTotalStudySeconds(newTotal);
-      totalStudyRef.current = newTotal;
-
-      if (studyElapsed > 0 && studyElapsed % 5 === 0) {
-        persistStudyTime(newTotal);
+      if (modeRef.current === "study" && studyStartTimestampRef.current !== null) {
+        const studyElapsed = Math.floor((now - studyStartTimestampRef.current) / 1000);
+        const newTotal = studySecondsAtStartRef.current + studyElapsed;
+        setTotalStudySeconds(newTotal);
+        totalStudyRef.current = newTotal;
+        
+        if (studyElapsed > 0 && studyElapsed % 5 === 0) persistStudyTime(newTotal);
       }
+
+      if (newTimeLeft === 0) {
+        if (modeRef.current === "study") persistStudyTime(totalStudyRef.current);
+        handleSessionEnd(newTimeLeft, modeRef.current, sessionsRef.current);
+      }
+      keepTicking = true;
     }
 
-    if (newTimeLeft === 0) {
-      if (modeRef.current === "study") {
-        persistStudyTime(totalStudyRef.current);
-      }
-      handleSessionEnd(newTimeLeft, modeRef.current, sessionsRef.current);
-      // FIX: Ensure the loop continues for the next automatically started session
+    // 2. Stopwatch Logic
+    if (isStopwatchRunningRef.current) {
+      const elapsed = (now - stopwatchStartRef.current) / 1000;
+      setStopwatchTime(stopwatchAccumRef.current + elapsed);
+      keepTicking = true;
+    }
+
+    if (keepTicking) {
       rafRef.current = requestAnimationFrame(tick);
     } else {
-      rafRef.current = requestAnimationFrame(tick);
+      rafRef.current = null;
     }
   }, [handleSessionEnd, persistStudyTime]);
 
-  // Start/stop the rAF loop when isRunning changes
-  useEffect(() => {
-    if (isRunning) {
-      startTimestampRef.current = performance.now();
-      startTimeLeftRef.current = timeLeft;
-
-      if (modeRef.current === "study") {
-        studyStartTimestampRef.current = performance.now();
-        studySecondsAtStartRef.current = totalStudyRef.current;
+  // --- TIMER CONTROLS ---
+  const toggleTimer = useCallback(() => {
+    setIsRunning((prev) => {
+      const next = !prev;
+      if (next) {
+        startTimestampRef.current = Date.now();
+        startTimeLeftRef.current = timeLeft;
+        if (modeRef.current === "study") {
+          studyStartTimestampRef.current = Date.now();
+          studySecondsAtStartRef.current = totalStudyRef.current;
+        }
+      } else {
+        if (modeRef.current === "study" && studyStartTimestampRef.current !== null) {
+          persistStudyTime(totalStudyRef.current);
+          studyStartTimestampRef.current = null;
+        }
       }
-
-      rafRef.current = requestAnimationFrame(tick);
-    } else {
-      if (rafRef.current) cancelAnimationFrame(rafRef.current);
-
-      // FIX: Rely on refs instead of stale state variables in this closure
-      if (modeRef.current === "study" && studyStartTimestampRef.current !== null) {
-        persistStudyTime(totalStudyRef.current);
-        studyStartTimestampRef.current = null;
-      }
-    }
-
-    return () => {
-      if (rafRef.current) cancelAnimationFrame(rafRef.current);
-    };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isRunning, tick, persistStudyTime]); 
-
-  const toggleTimer = useCallback(() => setIsRunning((prev) => !prev), []);
+      return next;
+    });
+  }, [timeLeft, persistStudyTime]);
 
   const resetTimer = useCallback(() => {
     setPreviousState({ timeLeft, isRunning, mode });
@@ -184,7 +189,39 @@ export default function Pomodoro() {
     }
   }, [previousState]);
 
-  // Keyboard shortcuts
+  // --- STOPWATCH CONTROLS ---
+  const toggleStopwatch = useCallback(() => {
+    setIsStopwatchRunning((prev) => {
+      const next = !prev;
+      if (next) {
+        stopwatchStartRef.current = Date.now();
+      } else {
+        stopwatchAccumRef.current = stopwatchTime;
+      }
+      return next;
+    });
+  }, [stopwatchTime]);
+
+  const resetStopwatch = useCallback(() => {
+    setIsStopwatchRunning(false);
+    setStopwatchTime(0);
+    stopwatchAccumRef.current = 0;
+  }, []);
+
+  // --- TRIGGER LOOP ---
+  useEffect(() => {
+    if ((isRunning || isStopwatchRunning) && !rafRef.current) {
+      rafRef.current = requestAnimationFrame(tick);
+    }
+    return () => {
+      if (!isRunning && !isStopwatchRunning && rafRef.current) {
+        cancelAnimationFrame(rafRef.current);
+        rafRef.current = null;
+      }
+    };
+  }, [isRunning, isStopwatchRunning, tick]);
+
+  // --- KEYBOARD SHORTCUTS ---
   useEffect(() => {
     const handleKeyDown = (e) => {
       if (e.target.tagName === "INPUT") return;
@@ -195,16 +232,14 @@ export default function Pomodoro() {
       } else if (e.key.toLowerCase() === "r") {
         e.preventDefault(); resetTimer();
       } else if (e.key.toLowerCase() === "n") {
-        e.preventDefault();
-        // FIX: Replaced direct state variables with refs to prevent listener churn
-        handleSessionEnd(0, modeRef.current, sessionsRef.current);
+        e.preventDefault(); handleSessionEnd(0, modeRef.current, sessionsRef.current);
       }
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [undoReset, toggleTimer, resetTimer, handleSessionEnd]); // Clean dependencies
+  }, [undoReset, toggleTimer, resetTimer, handleSessionEnd]);
 
-  // PiP logic
+  // --- PIP API ---
   const togglePiP = async () => {
     if (pipWindow) { pipWindow.close(); return; }
     if (!("documentPictureInPicture" in window)) {
@@ -223,12 +258,20 @@ export default function Pomodoro() {
     }
   };
 
+  // --- FORMATTERS ---
   const formatTime = (seconds) => {
     const h = Math.floor(seconds / 3600);
     const m = Math.floor((seconds % 3600) / 60);
     const s = seconds % 60;
     if (h > 0) return `${h.toString().padStart(2, "0")}:${m.toString().padStart(2, "0")}:${s.toString().padStart(2, "0")}`;
     return `${m.toString().padStart(2, "0")}:${s.toString().padStart(2, "0")}`;
+  };
+
+  const formatStopwatchTime = (totalSeconds) => {
+    const m = Math.floor(totalSeconds / 60);
+    const s = Math.floor(totalSeconds % 60);
+    const ms = Math.floor((totalSeconds % 1) * 100);
+    return `${m.toString().padStart(2, "0")}:${s.toString().padStart(2, "0")}.${ms.toString().padStart(2, "0")}`;
   };
 
   const bgColors = { study: "bg-black", shortBreak: "bg-green-600", longBreak: "bg-blue-600" };
@@ -245,6 +288,7 @@ export default function Pomodoro() {
           </div>
         )}
         <h1 className="text-3xl font-bold text-center mb-6">G4Gate Timer</h1>
+        
         <div className="flex justify-center space-x-2 mb-8">
           {["study", "shortBreak", "longBreak"].map((m) => (
             <span key={m} className={`px-4 py-1 rounded-full text-sm font-semibold capitalize transition ${mode === m ? "bg-slate-800 text-white" : "bg-slate-200 text-slate-500"}`}>
@@ -252,6 +296,7 @@ export default function Pomodoro() {
             </span>
           ))}
         </div>
+        
         <div className="text-center mb-8">
           <div className="text-7xl font-mono font-bold tracking-tight text-slate-900 mb-4">{formatTime(timeLeft)}</div>
           <div className="flex justify-center space-x-4">
@@ -261,7 +306,9 @@ export default function Pomodoro() {
             <button onClick={resetTimer} className="px-8 py-3 bg-slate-200 text-slate-800 rounded-lg font-bold hover:bg-slate-300 transition">Reset</button>
           </div>
         </div>
+        
         <hr className="my-6 border-slate-200" />
+        
         <div className="flex justify-between items-center mb-6 bg-slate-50 p-4 rounded-lg border border-slate-100">
           <div className="text-center w-1/2 border-r border-slate-200">
             <p className="text-xs text-slate-500 font-semibold uppercase tracking-wider mb-1">Sessions</p>
@@ -272,7 +319,8 @@ export default function Pomodoro() {
             <p className="text-2xl font-bold text-blue-600">{formatTime(totalStudySeconds)}</p>
           </div>
         </div>
-        <div className="space-y-4">
+        
+        <div className="space-y-4 mb-6">
           <h2 className="font-bold text-slate-700 text-sm uppercase tracking-wide">Custom Durations (Mins)</h2>
           <div className="grid grid-cols-3 gap-4">
             <div>
@@ -289,7 +337,23 @@ export default function Pomodoro() {
             </div>
           </div>
         </div>
+
+        {/* STOPWATCH COMPONENT */}
+        <div className="bg-slate-50 p-5 rounded-lg border border-slate-200 text-center shadow-inner">
+          <h2 className="font-bold text-slate-700 text-sm uppercase tracking-wide mb-3">Stopwatch</h2>
+          <div className="text-4xl font-mono font-bold text-slate-900 mb-4">{formatStopwatchTime(stopwatchTime)}</div>
+          <div className="flex justify-center space-x-3">
+            <button onClick={toggleStopwatch} className={`px-6 py-2 rounded font-bold transition ${isStopwatchRunning ? "bg-red-500 hover:bg-red-600 text-white" : "bg-blue-600 hover:bg-blue-700 text-white"}`}>
+              {isStopwatchRunning ? "Stop" : "Start"}
+            </button>
+            <button onClick={resetStopwatch} className="px-6 py-2 bg-slate-200 text-slate-800 rounded font-bold hover:bg-slate-300 transition">
+              Clear
+            </button>
+          </div>
+        </div>
+
       </div>
+      
       <div className="max-w-md w-full flex flex-col space-y-4">
         <button onClick={togglePiP} className="bg-white/20 hover:bg-white/30 text-white py-3 rounded-xl font-bold flex items-center justify-center transition shadow-lg backdrop-blur-md">
           🚀 Open Minimal Timer
