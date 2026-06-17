@@ -12,7 +12,7 @@ const getLogicalDay = () => {
 
 export default function Pomodoro() {
   // --- TABS & UI STATE ---
-  const [activeTab, setActiveTab] = useState("pomodoro");
+  const [activeTab, setActiveTab] = useState("freeFlow");
   const [showShortcuts, setShowShortcuts] = useState(false);
   const [pipWindow, setPipWindow] = useState(null);
 
