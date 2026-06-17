@@ -34,7 +34,7 @@ d.setHours(d.getHours() - 4);
 return d.toDateString();
 };
 export default function Pomodoro() {
-const [activeTab, setActiveTab] = useState("pomodoro");
+const [activeTab, setActiveTab] = useState("freeFlow");
 const [showShortcuts, setShowShortcuts] = useState(false);
 const [pipWindow, setPipWindow] = useState(null);
 const [studyDuration, setStudyDuration] = useState(60);

@@ -3,7 +3,6 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { createPortal } from "react-dom";
 
-// Helper: Treats anything before 4:00 AM as the previous day
 const getLogicalDay = () => {
   const d = new Date();
   d.setHours(d.getHours() - 4);
@@ -11,12 +10,10 @@ const getLogicalDay = () => {
 };
 
 export default function Pomodoro() {
-  // --- TABS & UI STATE ---
   const [activeTab, setActiveTab] = useState("freeFlow");
-  const [showShortcuts, setShowShortcuts] = useState(false);
   const [pipWindow, setPipWindow] = useState(null);
-
-  // --- POMODORO STATE ---
+  
+  // Pomodoro State
   const [studyDuration, setStudyDuration] = useState(60);
   const [shortBreakDuration, setShortBreakDuration] = useState(10);
   const [longBreakDuration, setLongBreakDuration] = useState(30);
@@ -26,54 +23,55 @@ export default function Pomodoro() {
   const [sessionsCompleted, setSessionsCompleted] = useState(0);
   const [totalStudySeconds, setTotalStudySeconds] = useState(0);
   const [previousState, setPreviousState] = useState(null);
-
-  // --- FREE FLOW STATE ---
-  const [freeMode, setFreeMode] = useState("idle"); 
+  
+  // Free Flow State
+  const [freeMode, setFreeMode] = useState("idle");
   const [freeStudyTime, setFreeStudyTime] = useState(0);
   const [freeBreakTime, setFreeBreakTime] = useState(0);
 
-  // --- ENGINE REFS (Mutable state for the Worker Math) ---
+  // Stream Break Timer State (OBS)
+  const [obsBreakInput, setObsBreakInput] = useState("");
+  const [obsBreakActive, setObsBreakActive] = useState(false);
+  const [obsTimeLeft, setObsTimeLeft] = useState(0);
+  const [obsResumeTime, setObsResumeTime] = useState("");
+  const [obsBreakDuration, setObsBreakDuration] = useState(0);
+
+  // Refs
   const startTimestampRef = useRef(null);
   const startTimeLeftRef = useRef(60 * 60);
   const studyStartTimestampRef = useRef(null);
   const studySecondsAtStartRef = useRef(0);
-
   const blockStartRef = useRef(null);
   const studyAccumRef = useRef(0);
   const breakAccumRef = useRef(0);
   const lastSaveRef = useRef(0);
-
+  
   const modeRef = useRef(mode);
   const sessionsRef = useRef(sessionsCompleted);
   const isRunningRef = useRef(isRunning);
   const freeModeRef = useRef(freeMode);
-
-  // State Mirror Refs (to throttle React updates)
   const timeLeftRef = useRef(timeLeft);
   const totalStudyRef = useRef(totalStudySeconds);
   const freeStudyTimeRef = useRef(freeStudyTime);
   const freeBreakTimeRef = useRef(freeBreakTime);
+  
+  const obsEndTimeRef = useRef(null);
+  const obsBreakActiveRef = useRef(false);
 
-  // Audio & Worker Refs
   const audioRef = useRef(null);
   const hasUnlockedAudio = useRef(false);
   const workerRef = useRef(null);
 
-  // Keep specific refs synced for the heartbeat math
   useEffect(() => { modeRef.current = mode; }, [mode]);
   useEffect(() => { sessionsRef.current = sessionsCompleted; }, [sessionsCompleted]);
   useEffect(() => { isRunningRef.current = isRunning; }, [isRunning]);
   useEffect(() => { freeModeRef.current = freeMode; }, [freeMode]);
 
-  // --- INITIALIZATION (Audio & Local Storage) ---
   useEffect(() => {
-    // 1. Initialize Audio (safely on client side)
     audioRef.current = new Audio("https://actions.google.com/sounds/v1/alarms/beep_short.ogg");
-
     const today = getLogicalDay();
-
-    // 2. Load Pomodoro
     const storedPomodoro = localStorage.getItem("pomodoroStudyTime");
+    
     if (storedPomodoro) {
       try {
         const { date, seconds } = JSON.parse(storedPomodoro);
@@ -85,8 +83,7 @@ export default function Pomodoro() {
         }
       } catch (e) { console.error("Error reading pomodoro local storage"); }
     }
-
-    // 3. Load Free Flow
+    
     const storedFreeFlow = localStorage.getItem("freeFlowState");
     if (storedFreeFlow) {
       try {
@@ -95,12 +92,10 @@ export default function Pomodoro() {
           setFreeMode(parsed.mode || "idle");
           studyAccumRef.current = parsed.studyAccum || 0;
           breakAccumRef.current = parsed.breakAccum || 0;
-          
           setFreeStudyTime(studyAccumRef.current);
           setFreeBreakTime(breakAccumRef.current);
           freeStudyTimeRef.current = studyAccumRef.current;
           freeBreakTimeRef.current = breakAccumRef.current;
-
           if (parsed.mode !== "idle" && parsed.lastTimestamp) {
             blockStartRef.current = parsed.lastTimestamp;
           }
@@ -111,14 +106,13 @@ export default function Pomodoro() {
     }
   }, []);
 
-  // --- AUDIO LOGIC ---
   const unlockAudio = useCallback(() => {
     if (!hasUnlockedAudio.current && audioRef.current) {
       audioRef.current.play().then(() => {
         audioRef.current.pause();
         audioRef.current.currentTime = 0;
         hasUnlockedAudio.current = true;
-      }).catch(() => {}); // Ignore if browser still complains
+      }).catch(() => {});
     }
   }, []);
 
@@ -129,7 +123,6 @@ export default function Pomodoro() {
     }
   }, []);
 
-  // --- PERSISTENCE ---
   const persistPomodoroTime = useCallback((seconds) => {
     localStorage.setItem("pomodoroStudyTime", JSON.stringify({ date: getLogicalDay(), seconds }));
   }, []);
@@ -144,7 +137,6 @@ export default function Pomodoro() {
     }));
   }, []);
 
-  // --- POMODORO SESSION HANDLER ---
   const handleSessionEnd = useCallback((currentTimeLeft, currentMode, currentSessionsCompleted) => {
     playSound();
     let nextMode;
@@ -162,7 +154,6 @@ export default function Pomodoro() {
       startTimeLeftRef.current = studyDuration * 60;
     }
     setMode(nextMode);
-    
     startTimestampRef.current = Date.now();
     if (nextMode === "study") {
       studyStartTimestampRef.current = Date.now();
@@ -172,44 +163,36 @@ export default function Pomodoro() {
     }
   }, [longBreakDuration, shortBreakDuration, studyDuration, playSound]);
 
-  // --- THE WORKER HEARTBEAT TICK ---
   const tick = useCallback(() => {
     const now = Date.now();
-
-    // 1. Pomodoro Logic
+    
+    // Pomodoro logic
     if (isRunningRef.current) {
       const elapsed = (now - startTimestampRef.current) / 1000;
       const exactTimeLeft = startTimeLeftRef.current - elapsed;
       const newTimeLeft = Math.max(0, Math.ceil(exactTimeLeft));
-
-      // Throttled UI Update
       if (newTimeLeft !== timeLeftRef.current) {
         setTimeLeft(newTimeLeft);
         timeLeftRef.current = newTimeLeft;
       }
-
-      // Pomodoro Total Study Tracker
       if (modeRef.current === "study" && studyStartTimestampRef.current !== null) {
         const studyElapsed = (now - studyStartTimestampRef.current) / 1000;
         const newTotal = studySecondsAtStartRef.current + studyElapsed;
-        
         if (Math.floor(newTotal) !== Math.floor(totalStudyRef.current)) {
           setTotalStudySeconds(newTotal);
           totalStudyRef.current = newTotal;
           if (Math.floor(newTotal) > 0 && Math.floor(newTotal) % 5 === 0) persistPomodoroTime(newTotal);
         }
       }
-
       if (newTimeLeft === 0) {
         if (modeRef.current === "study") persistPomodoroTime(totalStudyRef.current);
         handleSessionEnd(newTimeLeft, modeRef.current, sessionsRef.current);
       }
     }
-
-    // 2. Free Flow Logic
+    
+    // Free Flow logic
     if (freeModeRef.current !== "idle" && blockStartRef.current) {
       const elapsed = (now - blockStartRef.current) / 1000;
-      
       if (freeModeRef.current === "study") {
         const newStudy = studyAccumRef.current + elapsed;
         if (Math.floor(newStudy) !== Math.floor(freeStudyTimeRef.current)) {
@@ -223,20 +206,27 @@ export default function Pomodoro() {
           freeBreakTimeRef.current = newBreak;
         }
       }
-      
       if (now - lastSaveRef.current > 2000) {
         persistFreeFlowTime();
         lastSaveRef.current = now;
       }
     }
+
+    // OBS Stream Break Timer logic
+    if (obsBreakActiveRef.current && obsEndTimeRef.current) {
+      const left = obsEndTimeRef.current - now;
+      if (left <= 0) {
+        setObsBreakActive(false);
+        obsBreakActiveRef.current = false;
+        setObsTimeLeft(0);
+      } else {
+        setObsTimeLeft(left);
+      }
+    }
   }, [persistPomodoroTime, persistFreeFlowTime, handleSessionEnd]);
 
-  // --- BACKGROUND WEB WORKER MOUNT ---
   useEffect(() => {
     if (typeof window === "undefined") return;
-
-    // We build an inline web worker using a Blob so we don't need a separate JS file.
-    // The worker runs a simple 250ms heartbeat that triggers our main-thread tick logic.
     const workerCode = `
       let timer = null;
       self.onmessage = function(e) {
@@ -251,22 +241,16 @@ export default function Pomodoro() {
     const blob = new Blob([workerCode], { type: "application/javascript" });
     const workerUrl = URL.createObjectURL(blob);
     workerRef.current = new Worker(workerUrl);
-
     workerRef.current.onmessage = (e) => {
       if (e.data === "tick") tick();
     };
-
-    // Keep the heartbeat running as long as the component lives.
-    // It takes virtually 0 CPU and guarantees background consistency.
     workerRef.current.postMessage("start");
-
     return () => {
       workerRef.current.terminate();
       URL.revokeObjectURL(workerUrl);
     };
   }, [tick]);
 
-  // --- POMODORO CONTROLS ---
   const toggleTimer = useCallback(() => {
     unlockAudio();
     setIsRunning((prev) => {
@@ -309,18 +293,15 @@ export default function Pomodoro() {
     }
   }, [previousState]);
 
-  // --- FREE FLOW CONTROLS ---
   const toggleFreeStudy = useCallback(() => {
     unlockAudio();
     if (freeMode === "study") return;
-    
     const now = Date.now();
     if (freeMode === "break" && blockStartRef.current) {
       breakAccumRef.current += (now - blockStartRef.current) / 1000;
       setFreeBreakTime(breakAccumRef.current);
       freeBreakTimeRef.current = breakAccumRef.current;
     }
-
     blockStartRef.current = now;
     setFreeMode("study");
     persistFreeFlowTime();
@@ -329,14 +310,12 @@ export default function Pomodoro() {
   const toggleFreeBreak = useCallback(() => {
     unlockAudio();
     if (freeMode === "break") return;
-
     const now = Date.now();
     if (freeMode === "study" && blockStartRef.current) {
       studyAccumRef.current += (now - blockStartRef.current) / 1000;
       setFreeStudyTime(studyAccumRef.current);
       freeStudyTimeRef.current = studyAccumRef.current;
     }
-
     blockStartRef.current = now;
     setFreeMode("break");
     persistFreeFlowTime();
@@ -354,27 +333,65 @@ export default function Pomodoro() {
     localStorage.removeItem("freeFlowState");
   }, []);
 
-  // --- KEYBOARD SHORTCUTS ---
+  // OBS Stream Break Methods
+  const startObsBreak = useCallback(() => {
+    const mins = parseInt(obsBreakInput, 10);
+    if (isNaN(mins) || mins <= 0) return;
+
+    // Auto-stop study timer in free flow
+    if (freeModeRef.current !== "break") {
+        toggleFreeBreak();
+    }
+
+    setObsBreakDuration(mins);
+    const now = new Date();
+    const resumeDate = new Date(now.getTime() + mins * 60000);
+    
+    const options = { hour: 'numeric', minute: '2-digit', hour12: true };
+    setObsResumeTime(resumeDate.toLocaleTimeString('en-US', options).toLowerCase());
+
+    obsEndTimeRef.current = resumeDate.getTime();
+    obsBreakActiveRef.current = true;
+    setObsBreakActive(true);
+    setObsTimeLeft(mins * 60000);
+    setObsBreakInput("");
+  }, [obsBreakInput, toggleFreeBreak]);
+
+  const resetObsBreak = useCallback(() => {
+    obsBreakActiveRef.current = false;
+    setObsBreakActive(false);
+    obsEndTimeRef.current = null;
+    setObsTimeLeft(0);
+  }, []);
+
   useEffect(() => {
     const handleKeyDown = (e) => {
-      if (e.target.tagName === "INPUT") return;
+      // Manage key events for Inputs
+      if (e.target.tagName === "INPUT") {
+        if (e.key === "Enter" && activeTab === "freeFlow") startObsBreak();
+        if (e.key === "Escape" && activeTab === "freeFlow") resetObsBreak();
+        return;
+      }
+
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "z" && activeTab === "pomodoro") {
         e.preventDefault(); undoReset();
       } else if (e.key.toLowerCase() === "s" || e.code === "Space") {
-        e.preventDefault(); 
+        e.preventDefault();
         if (activeTab === "pomodoro") toggleTimer();
         else freeMode === "study" ? toggleFreeBreak() : toggleFreeStudy();
       } else if (e.key.toLowerCase() === "r") {
-        e.preventDefault(); 
+        e.preventDefault();
         if (activeTab === "pomodoro") resetTimer();
         else resetFreeFlow();
+      } else if (e.key === "Escape" && activeTab === "freeFlow") {
+        e.preventDefault();
+        resetObsBreak();
       }
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [undoReset, toggleTimer, resetTimer, toggleFreeStudy, toggleFreeBreak, resetFreeFlow, activeTab, freeMode]);
+  }, [undoReset, toggleTimer, resetTimer, toggleFreeStudy, toggleFreeBreak, resetFreeFlow, startObsBreak, resetObsBreak, activeTab, freeMode]);
 
-  // --- PIP API ---
   const togglePiP = async () => {
     if (pipWindow) { pipWindow.close(); return; }
     if (!("documentPictureInPicture" in window)) {
@@ -391,7 +408,6 @@ export default function Pomodoro() {
     } catch (error) { console.error("Failed to open PiP:", error); }
   };
 
-  // --- STRICT FORMATTERS ---
   const formatTimeHHMMSS = (totalSeconds) => {
     const h = Math.floor(totalSeconds / 3600);
     const m = Math.floor((totalSeconds % 3600) / 60);
@@ -407,13 +423,20 @@ export default function Pomodoro() {
     return `${m.toString().padStart(2, "0")}:${s.toString().padStart(2, "0")}`;
   };
 
+  const formatObsTime = (ms) => {
+    if (ms <= 0) return "00:00";
+    const totalSeconds = Math.floor(ms / 1000);
+    const m = Math.floor(totalSeconds / 60);
+    const s = totalSeconds % 60;
+    return `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
+  };
+
   const bgColors = { study: "bg-black", shortBreak: "bg-green-600", longBreak: "bg-blue-600" };
 
   const FullTimerUI = (
-    <div className={`min-h-screen flex flex-col items-center justify-center transition-colors duration-500 py-10 ${activeTab === 'pomodoro' ? bgColors[mode] : 'bg-slate-900'}`}>
-      <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full text-slate-800 mb-6 relative overflow-hidden">
+    <div className={`min-h-screen flex flex-col items-center justify-center transition-colors duration-500 py-10 px-4 ${activeTab === 'pomodoro' ? bgColors[mode] : 'bg-slate-900'}`}>
+      <div className={`bg-white rounded-2xl shadow-2xl transition-all duration-500 w-full text-slate-800 mb-6 relative overflow-hidden ${activeTab === "freeFlow" ? "max-w-4xl" : "max-w-md"}`}>
         
-        {/* TABS HEADER */}
         <div className="flex w-full border-b border-slate-200 bg-slate-50">
           <button
             className={`flex-1 py-4 text-sm font-bold uppercase tracking-wider transition-colors ${activeTab === "pomodoro" ? "bg-white text-slate-900 border-b-2 border-slate-900" : "text-slate-400 hover:text-slate-600"}`}
@@ -430,7 +453,6 @@ export default function Pomodoro() {
         </div>
 
         <div className="p-8">
-          {/* POMODORO TAB */}
           {activeTab === "pomodoro" && (
             <div className="animate-fade-in">
               {previousState && (
@@ -441,7 +463,6 @@ export default function Pomodoro() {
                   </span>
                 </div>
               )}
-              
               <div className="flex justify-center space-x-2 mb-8">
                 {["study", "shortBreak", "longBreak"].map((m) => (
                   <span key={m} className={`px-4 py-1 rounded-full text-sm font-semibold capitalize transition ${mode === m ? "bg-slate-800 text-white" : "bg-slate-200 text-slate-500"}`}>
@@ -449,7 +470,6 @@ export default function Pomodoro() {
                   </span>
                 ))}
               </div>
-              
               <div className="text-center mb-8">
                 <div className="text-7xl font-mono font-bold tracking-tight text-slate-900 mb-4">{formatTimeDynamic(timeLeft)}</div>
                 <div className="flex justify-center space-x-4">
@@ -459,9 +479,7 @@ export default function Pomodoro() {
                   <button onClick={resetTimer} className="px-8 py-3 bg-slate-200 text-slate-800 rounded-lg font-bold hover:bg-slate-300 transition">Reset</button>
                 </div>
               </div>
-              
               <hr className="my-6 border-slate-200" />
-              
               <div className="flex justify-between items-center mb-6 bg-slate-50 p-4 rounded-lg border border-slate-100">
                 <div className="text-center w-1/2 border-r border-slate-200">
                   <p className="text-xs text-slate-500 font-semibold uppercase tracking-wider mb-1">Sessions</p>
@@ -475,46 +493,87 @@ export default function Pomodoro() {
             </div>
           )}
 
-          {/* FREE FLOW TAB */}
           {activeTab === "freeFlow" && (
-            <div className="animate-fade-in text-center pt-4">
+            <div className="flex flex-col md:flex-row gap-8 items-stretch pt-2">
               
-              <div className="mb-8">
-                <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-2">Total Study</p>
-                <div className={`text-6xl font-mono font-bold tracking-tight transition-colors ${freeMode === 'study' ? 'text-blue-600' : 'text-slate-900'}`}>
-                  {formatTimeHHMMSS(freeStudyTime)}
+              {/* LEFT: Original Free Flow Stats */}
+              <div className="flex-1 flex flex-col justify-center animate-fade-in text-center">
+                <div className="mb-8">
+                  <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-2">Total Study</p>
+                  <div className={`text-6xl font-mono font-bold tracking-tight transition-colors ${freeMode === 'study' ? 'text-blue-600' : 'text-slate-900'}`}>
+                    {formatTimeHHMMSS(freeStudyTime)}
+                  </div>
+                  <div className={`mt-6 inline-block px-6 py-3 rounded-xl border transition-colors ${freeMode === 'break' ? 'border-amber-400 bg-amber-50' : 'border-slate-100 bg-slate-50'}`}>
+                    <p className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-1">Break Time</p>
+                    <div className={`text-2xl font-mono font-bold ${freeMode === 'break' ? 'text-amber-600' : 'text-slate-500'}`}>
+                      {formatTimeHHMMSS(freeBreakTime)}
+                    </div>
+                  </div>
                 </div>
-                
-                <div className={`mt-6 inline-block px-6 py-3 rounded-xl border transition-colors ${freeMode === 'break' ? 'border-amber-400 bg-amber-50' : 'border-slate-100 bg-slate-50'}`}>
-                   <p className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-1">Break Time</p>
-                   <div className={`text-2xl font-mono font-bold ${freeMode === 'break' ? 'text-amber-600' : 'text-slate-500'}`}>
-                     {formatTimeHHMMSS(freeBreakTime)}
-                   </div>
+                <div className="flex flex-col space-y-3 mb-4">
+                  <div className="flex space-x-3">
+                    <button
+                      onClick={toggleFreeStudy}
+                      className={`flex-1 py-4 rounded-xl font-bold text-lg transition shadow-sm ${freeMode === 'study' ? 'bg-blue-600 text-white ring-4 ring-blue-100' : 'bg-slate-100 text-slate-700 hover:bg-slate-200'}`}
+                    >
+                      📖 Study
+                    </button>
+                    <button
+                      onClick={toggleFreeBreak}
+                      className={`flex-1 py-4 rounded-xl font-bold text-lg transition shadow-sm ${freeMode === 'break' ? 'bg-amber-500 text-white ring-4 ring-amber-100' : 'bg-slate-100 text-slate-700 hover:bg-slate-200'}`}
+                    >
+                      ☕ Break
+                    </button>
+                  </div>
+                  <button
+                    onClick={resetFreeFlow}
+                    className="w-full py-3 bg-white border-2 border-slate-200 text-slate-500 rounded-xl font-bold hover:bg-slate-50 hover:text-red-500 transition"
+                  >
+                    Reset Everything
+                  </button>
                 </div>
               </div>
 
-              <div className="flex flex-col space-y-3 mb-4">
-                <div className="flex space-x-3">
-                  <button 
-                    onClick={toggleFreeStudy} 
-                    className={`flex-1 py-4 rounded-xl font-bold text-lg transition shadow-sm ${freeMode === 'study' ? 'bg-blue-600 text-white ring-4 ring-blue-100' : 'bg-slate-100 text-slate-700 hover:bg-slate-200'}`}
-                  >
-                    📖 Study
-                  </button>
-                  <button 
-                    onClick={toggleFreeBreak} 
-                    className={`flex-1 py-4 rounded-xl font-bold text-lg transition shadow-sm ${freeMode === 'break' ? 'bg-amber-500 text-white ring-4 ring-amber-100' : 'bg-slate-100 text-slate-700 hover:bg-slate-200'}`}
-                  >
-                    ☕ Break
-                  </button>
-                </div>
-                
-                <button 
-                  onClick={resetFreeFlow} 
-                  className="w-full py-3 bg-white border-2 border-slate-200 text-slate-500 rounded-xl font-bold hover:bg-slate-50 hover:text-red-500 transition"
+              {/* RIGHT: OBS Stream Break Timer */}
+              <div className="flex-1 md:border-l-2 md:border-slate-100 md:pl-8 flex items-center justify-center">
+                <div 
+                  className="w-full h-full min-h-[400px] bg-black rounded-2xl flex flex-col items-center justify-center p-6 relative group overflow-hidden"
+                  onDoubleClick={resetObsBreak}
                 >
-                  Reset Everything
-                </button>
+                  {!obsBreakActive ? (
+                    <div className="flex flex-col items-center gap-6 z-10">
+                      <input
+                        type="number"
+                        min="1"
+                        value={obsBreakInput}
+                        onChange={(e) => setObsBreakInput(e.target.value)}
+                        placeholder="Minutes"
+                        className="text-4xl py-4 px-6 rounded-xl border-2 border-slate-700 bg-slate-800 text-white text-center w-56 outline-none focus:border-blue-500 focus:shadow-[0_0_15px_rgba(59,130,246,0.3)] transition-all"
+                      />
+                      <button 
+                        onClick={startObsBreak}
+                        className="text-2xl py-3 px-10 rounded-xl bg-blue-500 text-white font-semibold hover:bg-blue-600 active:scale-95 transition-all"
+                      >
+                        Start Break
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="flex flex-col items-center text-center z-10 w-full select-none cursor-default">
+                      <div className="text-[6.5rem] sm:text-[7rem] font-bold tabular-nums tracking-tighter text-white mb-2 leading-none drop-shadow-[0_0_20px_rgba(59,130,246,0.2)]">
+                        {formatObsTime(obsTimeLeft)}
+                      </div>
+                      <div className="text-2xl sm:text-3xl font-medium text-slate-300 my-2">
+                        Break <span className="text-blue-500 font-bold">{obsBreakDuration}</span> mins
+                      </div>
+                      <div className="text-2xl sm:text-3xl font-medium text-slate-300">
+                        Resume @ <span className="text-blue-500 font-bold">{obsResumeTime}</span>
+                      </div>
+                      <div className="absolute bottom-4 text-slate-500 text-sm opacity-0 group-hover:opacity-100 transition-opacity">
+                        Press ESC or Double-click to reset
+                      </div>
+                    </div>
+                  )}
+                </div>
               </div>
 
             </div>
@@ -522,7 +581,7 @@ export default function Pomodoro() {
         </div>
       </div>
       
-      <div className="max-w-md w-full flex flex-col space-y-4">
+      <div className={`${activeTab === "freeFlow" ? "max-w-4xl" : "max-w-md"} w-full flex flex-col space-y-4`}>
         <button onClick={togglePiP} className="bg-white/10 hover:bg-white/20 text-white py-3 rounded-xl font-bold flex items-center justify-center transition shadow-lg backdrop-blur-md">
           🚀 Open Minimal Timer
         </button>
