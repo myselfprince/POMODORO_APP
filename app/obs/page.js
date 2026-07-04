@@ -276,7 +276,7 @@ export default function ObsOverlay() {
         <div className="flex justify-between items-center px-5 py-3 border-b border-white/5 bg-white/5">
           <div className="flex items-center space-x-2">
             <div className={`w-2.5 h-2.5 rounded-full ${theme.bg} animate-pulse`} />
-            <span className={`text-xs font-bold tracking-widest ${theme.color}`}>
+            <span className={`text-md font-bold tracking-widest ${theme.color}`}>
               {theme.label}
             </span>
           </div>
