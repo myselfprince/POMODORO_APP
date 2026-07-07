@@ -333,6 +333,38 @@ export default function ObsOverlay() {
     }
   };
 
+  const resetAllData = () => {
+    const confirmReset = window.confirm("Are you sure you want to completely reset all progress and start over?");
+    if (!confirmReset) return;
+
+    const resetDuration = parseInt(defaultStudyStr) || 60;
+    setIsRunning(false);
+    setPhase("study");
+    setCurrentDuration(resetDuration);
+    
+    const resetSeconds = resetDuration * 60;
+    setTimeLeft(resetSeconds);
+    pauseTimeLeftRef.current = resetSeconds;
+    
+    setAccumulatedTotalSeconds(0);
+    setSessionsCompleted(0);
+    setProgress(0);
+    
+    if (requestRef.current) {
+      cancelAnimationFrame(requestRef.current);
+    }
+
+    saveState({
+      isRunning: false,
+      phase: "study",
+      currentDuration: resetDuration,
+      pauseTimeLeft: resetSeconds,
+      targetTime: null,
+      accumulatedTotalSeconds: 0,
+      sessionsCompleted: 0
+    });
+  };
+
   const formatTime = (seconds) => {
     const m = Math.floor(seconds / 60);
     const s = seconds % 60;
@@ -516,6 +548,17 @@ export default function ObsOverlay() {
             </button>
           </div>
         </div>
+
+        <div className="w-full h-[1px] bg-white/10" />
+        
+        {/* RESET DATA BUTTON */}
+        <button
+          onClick={resetAllData}
+          className="w-full py-3 bg-red-500/10 hover:bg-red-500/20 text-red-500 border border-red-500/30 font-bold rounded-xl transition tracking-widest text-xs uppercase"
+        >
+          Reset All Progress
+        </button>
+
       </div>
     </div>
   );
