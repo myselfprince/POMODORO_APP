@@ -31,7 +31,7 @@ export default function ObsOverlay() {
   const [volume, setVolume] = useState(0.5);
 
   // New Tracking State
-  const [sessionHistory, setSessionHistory] = useState([]); // Tracks chronological blocks: { phase, duration }
+  const [accumulatedTotalSeconds, setAccumulatedTotalSeconds] = useState(0);
   const [sessionsCompleted, setSessionsCompleted] = useState(0);
 
   const targetTimeRef = useRef(null);
@@ -75,7 +75,7 @@ export default function ObsOverlay() {
           setPhase("study");
           setCurrentDuration(initialDuration);
           setIsRunning(false);
-          setSessionHistory([]);
+          setAccumulatedTotalSeconds(0);
           setSessionsCompleted(0);
           const initialSeconds = initialDuration * 60;
           setTimeLeft(initialSeconds);
@@ -83,13 +83,14 @@ export default function ObsOverlay() {
           
           saveState({
             phase: "study", currentDuration: initialDuration, isRunning: false, 
-            sessionHistory: [], sessionsCompleted: 0, pauseTimeLeft: initialSeconds, targetTime: null
+            accumulatedTotalSeconds: 0, sessionsCompleted: 0, pauseTimeLeft: initialSeconds, targetTime: null
           });
         } else {
           setPhase(parsed.phase || "study");
           setCurrentDuration(parsed.currentDuration || 60);
           setIsRunning(parsed.isRunning || false);
-          setSessionHistory(parsed.sessionHistory || []);
+          // Fallback to accumulatedStudySeconds for backwards compatibility if you just updated
+          setAccumulatedTotalSeconds(parsed.accumulatedTotalSeconds || parsed.accumulatedStudySeconds || 0);
           setSessionsCompleted(parsed.sessionsCompleted || 0);
 
           if (parsed.volume !== undefined) {
@@ -119,7 +120,7 @@ export default function ObsOverlay() {
         saveState({
           defaultStudyStr: "60", defaultBreakStr: "15", longBreakStr: "30", targetHoursStr: "12",
           phase: "study", currentDuration: 60, isRunning: false, pauseTimeLeft: initialSeconds,
-          volume: 0.5, sessionHistory: [], sessionsCompleted: 0
+          volume: 0.5, accumulatedTotalSeconds: 0, sessionsCompleted: 0
         });
       }
     }
@@ -142,13 +143,13 @@ export default function ObsOverlay() {
         setCurrentDuration(resetDuration);
         setTimeLeft(resetDuration * 60);
         pauseTimeLeftRef.current = resetDuration * 60;
-        setSessionHistory([]);
+        setAccumulatedTotalSeconds(0);
         setSessionsCompleted(0);
         setProgress(0);
         saveState({
             isRunning: false, phase: "study", currentDuration: resetDuration,
             pauseTimeLeft: resetDuration * 60, targetTime: null,
-            sessionHistory: [], sessionsCompleted: 0
+            accumulatedTotalSeconds: 0, sessionsCompleted: 0
         });
         return;
     }
@@ -171,11 +172,12 @@ export default function ObsOverlay() {
       let nextDurationMins = 1;
       let newSessions = sessionsCompleted;
       
-      // Save completed phase to history
-      const newHistory = [...sessionHistory, { phase, duration: currentDuration * 60 }];
+      // Add completed time to total (Study AND Breaks)
+      let newAccum = accumulatedTotalSeconds + (currentDuration * 60);
 
       if (phase === "study") {
         newSessions += 1;
+        
         // 4th Session = Long Break, otherwise normal Break
         if (newSessions > 0 && newSessions % 4 === 0) {
           nextPhase = "longBreak";
@@ -192,7 +194,7 @@ export default function ObsOverlay() {
       setPhase(nextPhase);
       setCurrentDuration(nextDurationMins);
       setSessionsCompleted(newSessions);
-      setSessionHistory(newHistory);
+      setAccumulatedTotalSeconds(newAccum);
 
       const nextDurationSeconds = nextDurationMins * 60;
       const newTarget = Date.now() + nextDurationSeconds * 1000;
@@ -202,13 +204,13 @@ export default function ObsOverlay() {
 
       saveState({
         phase: nextPhase, currentDuration: nextDurationMins, targetTime: newTarget,
-        pauseTimeLeft: nextDurationSeconds, sessionHistory: newHistory,
+        pauseTimeLeft: nextDurationSeconds, accumulatedTotalSeconds: newAccum,
         sessionsCompleted: newSessions
       });
     } else {
       requestRef.current = requestAnimationFrame(tick);
     }
-  }, [isRunning, phase, currentDuration, defaultStudyStr, defaultBreakStr, longBreakStr, sessionHistory, sessionsCompleted]);
+  }, [isRunning, phase, currentDuration, defaultStudyStr, defaultBreakStr, longBreakStr, accumulatedTotalSeconds, sessionsCompleted]);
 
   useEffect(() => {
     if (isRunning) {
@@ -237,15 +239,12 @@ export default function ObsOverlay() {
     let nextDurationMins = 1;
     let newSessions = sessionsCompleted;
     
-    // Save partially completed phase to history if there is any elapsed time
-    const elapsed = (currentDuration * 60) - timeLeft;
-    const newHistory = [...sessionHistory];
-    if (elapsed > 0) {
-      newHistory.push({ phase, duration: elapsed });
-    }
+    // Add only the time we actually spent before skipping
+    let newAccum = accumulatedTotalSeconds + Math.max(0, (currentDuration * 60) - timeLeft);
 
     if (phase === "study") {
       newSessions += 1;
+      
       if (newSessions > 0 && newSessions % 4 === 0) {
         nextPhase = "longBreak";
         nextDurationMins = parseInt(longBreakStr) || 30;
@@ -261,7 +260,7 @@ export default function ObsOverlay() {
     setPhase(nextPhase);
     setCurrentDuration(nextDurationMins);
     setSessionsCompleted(newSessions);
-    setSessionHistory(newHistory);
+    setAccumulatedTotalSeconds(newAccum);
 
     const nextDurationSeconds = nextDurationMins * 60;
     setTimeLeft(nextDurationSeconds);
@@ -275,18 +274,15 @@ export default function ObsOverlay() {
     }
     saveState({
       phase: nextPhase, currentDuration: nextDurationMins, pauseTimeLeft: nextDurationSeconds,
-      targetTime: newTargetTime, sessionHistory: newHistory, sessionsCompleted: newSessions
+      targetTime: newTargetTime, accumulatedTotalSeconds: newAccum, sessionsCompleted: newSessions
     });
   };
 
   const handleStartCustom = (targetPhase, minutesStr) => {
-    // Record current phase elapsed time before switching
-    const elapsed = (currentDuration * 60) - timeLeft;
-    const newHistory = [...sessionHistory];
-    if (elapsed > 0) {
-      newHistory.push({ phase, duration: Math.floor(elapsed) });
-    }
-    setSessionHistory(newHistory);
+    // Preserve the time already spent in the current phase before overriding
+    const elapsed = Math.max(0, (currentDuration * 60) - timeLeft);
+    const newAccum = accumulatedTotalSeconds + elapsed;
+    setAccumulatedTotalSeconds(newAccum);
 
     const validMinutes = parseInt(minutesStr) || 1;
     setPhase(targetPhase);
@@ -301,9 +297,10 @@ export default function ObsOverlay() {
       newTargetTime = Date.now() + seconds * 1000;
       targetTimeRef.current = newTargetTime;
     }
+    
     saveState({ 
-      phase: targetPhase, currentDuration: validMinutes, pauseTimeLeft: seconds, 
-      targetTime: newTargetTime, sessionHistory: newHistory 
+        phase: targetPhase, currentDuration: validMinutes, pauseTimeLeft: seconds, 
+        targetTime: newTargetTime, accumulatedTotalSeconds: newAccum 
     });
   };
 
@@ -354,6 +351,7 @@ export default function ObsOverlay() {
     theme = { color: "text-emerald-400", bg: "bg-emerald-500", shadow: "drop-shadow-[0_0_15px_rgba(16,185,129,0.5)]", label: "LONG BREAK" };
   }
 
+  // Figure out the next phase text dynamically
   let nextPhaseText = "";
   if (phase === "study") {
     nextPhaseText = (sessionsCompleted + 1) % 4 === 0 
@@ -363,89 +361,44 @@ export default function ObsOverlay() {
     nextPhaseText = `Study (${defaultStudyStr || 0}m)`;
   }
 
-  // --- MULTI-PHASE TIMELINE LOGIC ---
+  // --- TIMELINE LOGIC ---
+  // Real-time calculation of total seconds (past accumulated + ongoing session time)
+  const displayTotalSeconds = accumulatedTotalSeconds + Math.max(0, (currentDuration * 60) - timeLeft);
   const targetHoursNum = parseFloat(targetHoursStr) || 12;
 
-  // 1. Build the full chronological list of elapsed segments
-  const currentElapsed = Math.max(0, (currentDuration * 60) - timeLeft);
-  const fullTimeline = [...sessionHistory];
-  if (currentElapsed > 0) {
-    fullTimeline.push({ phase, duration: currentElapsed });
-  }
-
-  // 2. Determine how many timelines/bars to show
-  let barsConfig = [];
+  // Split logic: If target > 8 hours, split evenly into chunks
+  let chunks = [];
   if (targetHoursNum > 8) {
     const half = Math.ceil(targetHoursNum / 2);
-    barsConfig = [
-      { labelStart: "0h", labelEnd: `${half}h`, capacity: half * 3600 },
-      { labelStart: `${half}h`, labelEnd: `${targetHoursNum}h`, capacity: (targetHoursNum - half) * 3600 }
-    ];
+    chunks = [half, targetHoursNum - half];
   } else {
-    barsConfig = [
-      { labelStart: "0h", labelEnd: `${targetHoursNum}h`, capacity: targetHoursNum * 3600 }
-    ];
+    chunks = [targetHoursNum];
   }
 
-  // 3. Distribute segments across the timeline bars
-  let queue = fullTimeline.map(t => ({ ...t })); // Deep copy so we can safely split chunks
-  
-  const renderedBars = barsConfig.map((bar) => {
-    let remainingCapacity = bar.capacity;
-    const segments = [];
-
-    while (queue.length > 0 && remainingCapacity > 0) {
-      const item = queue[0];
-      if (item.duration <= remainingCapacity) {
-        // Fits entirely in current bar
-        segments.push({ phase: item.phase, duration: item.duration });
-        remainingCapacity -= item.duration;
-        queue.shift(); // Remove from queue
-      } else {
-        // Too big, split it
-        segments.push({ phase: item.phase, duration: remainingCapacity });
-        queue[0].duration -= remainingCapacity; // Keep remainder in queue for next bar
-        remainingCapacity = 0; // Bar is full
-      }
-    }
-    return { ...bar, segments };
-  });
+  let remainingDisplay = displayTotalSeconds;
 
   return (
     <div className="w-screen h-screen bg-transparent flex items-center justify-between px-16 font-sans overflow-hidden relative">
       
-      {/* 🚀 DYNAMIC MULTI-SEGMENT PROGRESS TIMELINE 🚀 */}
+      {/* 🚀 DYNAMIC PROGRESS TIMELINE 🚀 */}
       <div className="absolute top-8 left-0 w-full px-16 flex flex-col gap-4 z-50 pointer-events-none">
-        {renderedBars.map((bar, i) => (
-          <div key={i} className="w-full h-5 bg-black/60 border border-white/20 rounded-full overflow-hidden backdrop-blur-md shadow-2xl relative flex">
-            {/* Labels */}
-            <div className="absolute left-3 top-1/2 -translate-y-1/2 text-[10px] font-bold text-white/70 uppercase tracking-widest z-10">{bar.labelStart}</div>
-            <div className="absolute right-3 top-1/2 -translate-y-1/2 text-[10px] font-bold text-white/70 uppercase tracking-widest z-10">{bar.labelEnd}</div>
-            
-            {/* Render chronologic segments inline */}
-            {bar.segments.map((seg, idx) => {
-              const pct = (seg.duration / bar.capacity) * 100;
-              
-              // Colors for different phases
-              let segmentClass = "";
-              if (seg.phase === "study") {
-                segmentClass = "bg-blue-500 shadow-[0_0_15px_rgba(59,130,246,0.5)] z-0";
-              } else if (seg.phase === "break") {
-                segmentClass = "bg-amber-400/90 shadow-[0_0_10px_rgba(251,191,36,0.4)] z-0 opacity-80 border-l border-r border-black/30";
-              } else if (seg.phase === "longBreak") {
-                segmentClass = "bg-emerald-400/90 shadow-[0_0_10px_rgba(52,211,153,0.4)] z-0 opacity-80 border-l border-r border-black/30";
-              }
-
-              return (
-                <div
-                  key={idx}
-                  className={`h-full transition-all duration-1000 ease-linear ${segmentClass}`}
-                  style={{ width: `${pct}%` }}
-                />
-              );
-            })}
-          </div>
-        ))}
+        {chunks.map((chunkHrs, i) => {
+          const capacitySeconds = chunkHrs * 3600;
+          const filledSeconds = Math.min(Math.max(remainingDisplay, 0), capacitySeconds);
+          remainingDisplay -= filledSeconds;
+          const pct = (filledSeconds / capacitySeconds) * 100;
+          
+          return (
+            <div key={i} className="w-full h-5 bg-black/60 border border-white/20 rounded-full overflow-hidden backdrop-blur-md shadow-2xl relative">
+              <div className="absolute left-3 top-1/2 -translate-y-1/2 text-[10px] font-bold text-white/70 uppercase tracking-widest z-10">0h</div>
+              <div className="absolute right-3 top-1/2 -translate-y-1/2 text-[10px] font-bold text-white/70 uppercase tracking-widest z-10">{chunkHrs}h</div>
+              <div
+                className="h-full bg-gradient-to-r from-blue-500 to-cyan-400 transition-all duration-1000 ease-linear shadow-[0_0_15px_rgba(56,189,248,0.6)]"
+                style={{ width: `${pct}%` }}
+              />
+            </div>
+          );
+        })}
       </div>
 
       {/* LEFT: TIMER DISPLAY */}
@@ -494,7 +447,7 @@ export default function ObsOverlay() {
         {/* Study Target */}
         <div className="flex flex-col gap-2">
             <div>
-              <p className="text-xs text-cyan-400 font-bold uppercase tracking-widest">Study Goal</p>
+              <p className="text-xs text-cyan-400 font-bold uppercase tracking-widest">Session Goal</p>
               <p className="text-[10px] text-white/40 mb-1">Populates the dynamic timeline.</p>
             </div>
             <div className="flex gap-2 items-center">
@@ -504,7 +457,7 @@ export default function ObsOverlay() {
                   onChange={(e) => handleDefaultChange("targetHours", e.target.value)} 
                   className="w-16 bg-[#1e2330] border border-slate-700 text-white text-center p-2 rounded-lg outline-none focus:border-cyan-500 transition text-sm" 
                 />
-                <span className="text-xs text-white/60 font-bold uppercase tracking-widest">Hours</span>
+                <span className="text-xs text-white/60 font-bold uppercase tracking-widest">Hours Total</span>
             </div>
         </div>
 
