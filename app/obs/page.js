@@ -334,7 +334,7 @@ export default function ObsOverlay() {
   };
 
   const resetAllData = () => {
-    const confirmReset = window.confirm("Are you sure you want to completely reset all progress and start over?");
+    const confirmReset = true;
     if (!confirmReset) return;
 
     const resetDuration = parseInt(defaultStudyStr) || 60;
